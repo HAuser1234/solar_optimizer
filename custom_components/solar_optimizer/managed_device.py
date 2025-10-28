@@ -286,7 +286,8 @@ class ManagedDevice:
                 f"Incorrect action_mode declaration for entity '{self._entity_id}'. Action_mode '{self._action_mode}' is not supported. Use one of {CONF_ACTION_MODES}"
             )
 
-        self._current_power = self._requested_power
+        # Update current power to the new requested power (not the old _requested_power)
+        self._current_power = requested_power
 
     async def activate(self, requested_power=None):
         """Use this method to activate this ManagedDevice"""
@@ -411,16 +412,18 @@ class ManagedDevice:
         
         # Handle potential lag between command and state update for BOTH activation and deactivation:
         # 1. Device just turned OFF: requested=0 but HA still shows ON (actual>0)
-        #    -> Use requested=0 to avoid overestimating consumption
+        #    -> Use actual power so it gets properly subtracted from household consumption
+        #       (the power_consumption sensor still includes this device's power during lag)
         # 2. Device just turned ON: requested>0 but HA still shows OFF (actual<requested)
         #    -> Use requested to avoid underestimating consumption
         # 3. Device consuming more than requested: actual > requested (both >0)
         #    -> Trust actual (device might be using more power than expected)
         if self._requested_power == 0 and actual_state_power > 0:
             # Deactivation lag: we turned it off but HA still shows it on
-            self._current_power = 0
+            # Use actual_state_power so it gets properly subtracted from household consumption
+            self._current_power = actual_state_power
             _LOGGER.debug(
-                "Device %s: using requested_power=0W (HA state shows %sW, deactivation lag)",
+                "Device %s: using actual_state_power=%sW (requested=0W, deactivation lag)",
                 self._name,
                 actual_state_power,
             )
