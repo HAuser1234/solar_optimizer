@@ -347,23 +347,13 @@ class SolarOptimizerCoordinator(DataUpdateCoordinator):
         household_consumption_with_deficit = raw_consumption - total_current_distributed_power
         household_consumption_raw = max(0, household_consumption_with_deficit)
         
-        # Apply smoothing to household consumption if configured
-        # This helps compensate for short-duration devices like fridges, kettles, etc.
-        if self._smoothing_household_window_min > 0:
-            household_consumption = self._apply_smoothing_window(
-                self._household_window,
-                self._smoothing_household_window_min,
-                household_consumption_raw,
-                "household_consumption"
-            )
-            # After smoothing, ensure it stays non-negative
-            household_consumption = max(0, household_consumption)
-            calculated_data["household_consumption_smoothing_mode"] = "sliding_window"
-            calculated_data["household_consumption_window_count"] = len(self._household_window)
-        else:
-            household_consumption = household_consumption_raw
-            calculated_data["household_consumption_smoothing_mode"] = "none"
-            calculated_data["household_consumption_window_count"] = 0
+        # Do NOT smooth household consumption as it is a derived value that changes
+        # instantly when devices switch. Smoothing a derived value creates lag artifacts
+        # where the sensor values don't match reality when device states change.
+        # If smoothing is needed, it should be applied to the raw consumption sensor instead.
+        household_consumption = household_consumption_raw
+        calculated_data["household_consumption_smoothing_mode"] = "none"
+        calculated_data["household_consumption_window_count"] = 0
         
         calculated_data["household_consumption"] = household_consumption
         calculated_data["household_consumption_brut"] = household_consumption_raw
