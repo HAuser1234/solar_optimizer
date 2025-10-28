@@ -105,19 +105,22 @@ async def test_device_switching_with_state_lag(
     
     # With the fix:
     # Device A: requested_power=0, HA state shows ON (1000W)
-    #   -> Should use requested_power=0 (deactivation lag handling)
+    #   -> Should use actual_state_power=1000W (deactivation lag handling)
+    #   -> This ensures the device's power is properly subtracted from household consumption
     # Device B: requested_power=1900, HA state shows OFF (0W)  
     #   -> Should use requested_power=1900 (activation lag handling)
     
-    assert device_a.current_power == 0, \
-        f"Device A should use requested_power=0W even though HA state shows ON (deactivation lag). Got {device_a.current_power}W"
+    assert device_a.current_power == 1000, \
+        f"Device A should use actual_state_power=1000W during deactivation lag (HA state shows ON). Got {device_a.current_power}W"
     
     assert device_b.current_power == 1900, \
         f"Device B should use requested_power=1900W even though HA state shows OFF (activation lag). Got {device_b.current_power}W"
     
-    # Total distributed power should now correctly be 0 + 1900 = 1900W
-    # NOT 1000 + 0 = 1000W (the bug) or 1000 + 1900 = 2900W (old understanding)
-    # This prevents the algorithm from thinking there's more power available than there is
+    # Total distributed power should now correctly be 1000 + 1900 = 2900W
+    # This ensures that when calculating household consumption:
+    #   household = raw_consumption - total_distributed_power
+    # The 1000W from Device A (which is still in the sensor reading) is properly subtracted
+    # preventing the bug where available power would drop to 0
 
 
 async def test_device_power_tracking_with_requested_power(
@@ -177,16 +180,18 @@ async def test_device_power_tracking_with_requested_power(
         "Should use actual state (0) when requested_power is 0 and HA updated"
     
     # Test 4: Device ON in HA (old state), but we turned it off (requested_power=0)
-    # This is DEACTIVATION LAG - should use requested_power=0
+    # This is DEACTIVATION LAG - should use actual_state_power (not 0) so it gets properly
+    # subtracted from household consumption calculation
     await fake_input_bool.async_turn_on()
     await hass.async_block_till_done()
     
     device.set_requested_power(0)  # We asked to turn off
     device.set_current_power_with_device_state()
-    # With the fix: should use requested_power=0 (deactivation lag)
-    # This prevents counting the device as still using power when we just turned it off
-    assert device.current_power == 0, \
-        "Should use requested_power=0 when device was turned off but HA still shows ON (deactivation lag)"
+    # With the fix: should use actual_state_power=2000W (deactivation lag)
+    # This ensures the device's power is properly subtracted from household consumption
+    # The power_consumption sensor still includes this device's 2000W during the lag period
+    assert device.current_power == 2000, \
+        f"Should use actual_state_power=2000W when device was turned off but HA still shows ON (deactivation lag). Got {device.current_power}W"
 
 
 async def test_multi_device_switching_scenario(
@@ -280,9 +285,10 @@ async def test_multi_device_switching_scenario(
     device_b.set_current_power_with_device_state()
     device_c.set_current_power_with_device_state()
     
-    # With the fix: Device A should report 0W even though HA still shows ON
-    assert device_a.current_power == 0, \
-        f"Device A should use requested_power=0W despite HA lag. Got {device_a.current_power}W"
+    # With the fix: Device A should report 750W (actual state) during deactivation lag
+    # This ensures it gets properly subtracted from household consumption
+    assert device_a.current_power == 750, \
+        f"Device A should use actual_state_power=750W during deactivation lag (HA still shows ON). Got {device_a.current_power}W"
     
     # Get coordinator and verify total_current_distributed_power
     coordinator = SolarOptimizerCoordinator.get_coordinator()
@@ -292,7 +298,7 @@ async def test_multi_device_switching_scenario(
         dev.current_power for dev in coordinator.devices if dev.current_power > 0
     )
     
-    # Should be 0W (Device A correctly counted as off)
-    # NOT 750W (which would happen without the fix)
-    assert total_distributed == 0, \
-        f"Total distributed power should be 0W with fix. Got {total_distributed}W"
+    # Should be 750W (Device A correctly counted at actual power during lag)
+    # This prevents household_consumption from being artificially high
+    assert total_distributed == 750, \
+        f"Total distributed power should be 750W during deactivation lag. Got {total_distributed}W"
