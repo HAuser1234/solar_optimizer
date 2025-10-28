@@ -483,6 +483,7 @@ class SolarOptimizerCoordinator(DataUpdateCoordinator):
                     requested_power,
                 )
                 should_log = True
+                old_requested_power = requested_power  # Update to new power
                 await device.change_requested_power(requested_power)
 
             device.set_requested_power(old_requested_power)
